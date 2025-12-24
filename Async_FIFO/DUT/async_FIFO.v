@@ -46,12 +46,15 @@ module async_FIFO #(parameter data_width=8, add_bits = 3)(
     wire [add_bits : 0] wptr_gray_sync, rptr_gray_sync ;
     wire [add_bits : 0] wptr_gray , rptr_gray;
     reg [data_width-1:0] fifo [0:(1<<add_bits) - 1]; //// Fifo data structure of size 8
-    //// Write Domain
+    reg overflow_r, underflow_r; // registered overflow is imp as it can be sampled by tb, safe practice, precise timing, as the event is stored/registered
+    //// Write Domain    
     always@(posedge wclk or negedge wrstn)begin
         if(!wrstn) begin
             wptr_bin <= 0;
+            overflow_r <= 0;
         end
         else begin
+            overflow_r <= (wen && full);
             if(wen & ~full)begin
                 fifo[wptr_bin[add_bits-1:0]] <= wdata;
                 wptr_bin <= wptr_bin + 1;         
@@ -59,22 +62,20 @@ module async_FIFO #(parameter data_width=8, add_bits = 3)(
         end
     end    
     assign wptr_gray = wptr_bin ^ (wptr_bin >>1); // Preserving MSB for empty/full logic
-    synchronizer #(.bits(add_bits+1)) read_synchronizer ( .clk(rclk), .resetn(rrstn), .signal(wptr_gray), .sync2(wptr_gray_sync) ); // wptr_gray synchronizer to read domain
+    synchronizer #(.bits(add_bits+1)) write_synchronizer ( .clk(rclk), .resetn(rrstn), .signal(wptr_gray), .sync2(wptr_gray_sync) ); // wptr_gray synchronizer to read domain
     assign full = (wptr_gray == {~rptr_gray_sync[add_bits:add_bits-1],  rptr_gray_sync[add_bits-2:0]}); 
-    reg overflow_r;
-    always @(posedge wclk or negedge wrstn) begin
-      if (!wrstn) overflow_r <= 1'b0;
-      else overflow_r <= (wen && full);
-    end
     assign overflow = overflow_r;
     
     //// Read Domain
+    
     always@(posedge rclk or negedge rrstn)begin
         if(!rrstn) begin
             rptr_bin <= 0;
             rdata <= 0;
+            underflow_r <= 0;
         end
         else begin
+            underflow_r <= (ren && empty);
             if(ren & ~empty)begin
                 rdata <= fifo[rptr_bin[add_bits-1:0]];
                 rptr_bin <= rptr_bin + 1;
@@ -82,12 +83,7 @@ module async_FIFO #(parameter data_width=8, add_bits = 3)(
         end
     end
     assign rptr_gray = rptr_bin ^ (rptr_bin >>1); // Preserving MSB for empty/full logic
-    synchronizer #(.bits(add_bits+1)) write_synchronizer( .clk(wclk), .resetn(wrstn), .signal(rptr_gray), .sync2(rptr_gray_sync) ); // rptr_gray synchronizer to write domain
-    assign empty = ( rptr_gray == wptr_gray_sync );
-    reg underflow_r;
-    always @(posedge rclk or negedge rrstn) begin
-      if (!rrstn) underflow_r <= 1'b0;
-      else underflow_r <= (ren && empty);
-    end
+    synchronizer #(.bits(add_bits+1)) read_synchronizer( .clk(wclk), .resetn(wrstn), .signal(rptr_gray), .sync2(rptr_gray_sync) ); // rptr_gray synchronizer to write domain
+    assign empty = ( rptr_gray == wptr_gray_sync );     
     assign underflow = underflow_r;
 endmodule
